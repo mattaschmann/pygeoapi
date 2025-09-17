@@ -107,10 +107,25 @@ class AsyncPostgreSQLProvider(PostgreSQLProvider):
             'pool_recycle': 3600,  # Recycle connections after 1 hour
         }
 
+        # Filter out async-specific options from provider definition for sync engine
+        sync_provider_def = provider_def.copy()
+        if 'options' in sync_provider_def:
+            sync_options = sync_provider_def['options'].copy()
+            # Remove async-specific options that would cause issues with sync engine
+            async_only_options = {'pool_size', 'max_overflow', 'pool_pre_ping', 'pool_recycle'}
+            for option in async_only_options:
+                sync_options.pop(option, None)
+            sync_provider_def['options'] = sync_options
+
         # Initialize parent class first
-        super().__init__(provider_def)
+        super().__init__(sync_provider_def)
 
         # Create async engine for async operations with psycopg3 optimizations
+        # Only use async-specific options for the async engine
+        async_conn_args = self.db_options.copy()
+        async_conn_args.update(extra_conn_args)
+        async_conn_args.update(psycopg3_conn_args)
+
         self._async_engine = get_async_engine(
             async_driver_name,
             self.db_host,
@@ -118,7 +133,7 @@ class AsyncPostgreSQLProvider(PostgreSQLProvider):
             self.db_name,
             self.db_user,
             self._db_password,
-            **self.db_options | extra_conn_args | psycopg3_conn_args
+            **async_conn_args
         )
 
         # Create async session factory
