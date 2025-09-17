@@ -38,7 +38,7 @@ from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 
 from pygeoapi.provider.base import ProviderItemNotFoundError
-from pygeoapi.provider.sql import GenericSQLProvider, get_table_model
+from pygeoapi.provider.sql import PostgreSQLProvider, get_table_model
 from pygeoapi.util import get_crs_from_uri
 
 LOGGER = logging.getLogger(__name__)
@@ -75,7 +75,7 @@ def get_async_engine(
     return engine
 
 
-class AsyncPostgreSQLProvider(GenericSQLProvider):
+class AsyncPostgreSQLProvider(PostgreSQLProvider):
     """
     An async provider for querying a PostgreSQL database
     """
@@ -107,8 +107,8 @@ class AsyncPostgreSQLProvider(GenericSQLProvider):
             'pool_recycle': 3600,  # Recycle connections after 1 hour
         }
 
-        # Initialize parent class
-        super().__init__(provider_def, driver_name, extra_conn_args)
+        # Initialize parent class first
+        super().__init__(provider_def)
 
         # Create async engine for async operations with psycopg3 optimizations
         self._async_engine = get_async_engine(
@@ -126,21 +126,6 @@ class AsyncPostgreSQLProvider(GenericSQLProvider):
             self._async_engine, class_=AsyncSession, expire_on_commit=False
         )
 
-    def _get_bbox_filter(self, bbox: list[float]):
-        """
-        Construct the bounding box filter function
-        """
-        if not bbox:
-            return True  # Let everything through if no bbox
-
-        # Since this provider uses postgis, we can use ST_MakeEnvelope
-        storage_srid = get_crs_from_uri(self.storage_crs).to_epsg()
-        envelope = ST_MakeEnvelope(*bbox, storage_srid or 4326)
-
-        geom_column = getattr(self.table_model, self.geom)
-        bbox_filter = ST_Intersects(envelope, geom_column)
-
-        return bbox_filter
 
     async def query_async(
         self,
