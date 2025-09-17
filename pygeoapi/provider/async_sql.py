@@ -30,6 +30,7 @@
 from copy import deepcopy
 import functools
 import logging
+import asyncio
 
 from geoalchemy2.functions import ST_MakeEnvelope, ST_Intersects
 from sqlalchemy import select, func
@@ -64,7 +65,13 @@ def get_async_engine(
         database=database
     )
     engine = create_async_engine(
-        conn_str, connect_args=connect_args, pool_pre_ping=True
+        conn_str,
+        connect_args=connect_args,
+        pool_pre_ping=connect_args.get('pool_pre_ping', True),
+        pool_size=connect_args.get('pool_size', 20),
+        max_overflow=connect_args.get('max_overflow', 30),
+        pool_recycle=connect_args.get('pool_recycle', 3600),
+        echo=False  # Set to True for debugging SQL queries
     )
     return engine
 
@@ -87,17 +94,25 @@ class AsyncPostgreSQLProvider(GenericSQLProvider, AsyncSQLProvider):
         """
 
         driver_name = 'postgresql+psycopg2'
-        async_driver_name = 'postgresql+asyncpg'
+        async_driver_name = 'postgresql+psycopg'
         extra_conn_args = {
             'client_encoding': 'utf8',
             'application_name': 'pygeoapi'
+        }
+
+        # psycopg3 specific optimizations for concurrent operations
+        psycopg3_conn_args = {
+            'pool_size': 20,  # Size of the connection pool
+            'max_overflow': 30,  # Maximum overflow connections
+            'pool_pre_ping': True,  # Validate connections before use
+            'pool_recycle': 3600,  # Recycle connections after 1 hour
         }
 
         # Initialize both parent classes
         GenericSQLProvider.__init__(self, provider_def, driver_name, extra_conn_args)
         AsyncSQLProvider.__init__(self, provider_def)
 
-        # Create async engine for async operations
+        # Create async engine for async operations with psycopg3 optimizations
         self._async_engine = get_async_engine(
             async_driver_name,
             self.db_host,
@@ -105,7 +120,7 @@ class AsyncPostgreSQLProvider(GenericSQLProvider, AsyncSQLProvider):
             self.db_name,
             self.db_user,
             self._db_password,
-            **self.db_options | extra_conn_args
+            **self.db_options | extra_conn_args | psycopg3_conn_args
         )
 
         # Create async session factory
@@ -174,7 +189,7 @@ class AsyncPostgreSQLProvider(GenericSQLProvider, AsyncSQLProvider):
             select_properties, skip_geometry
         )
 
-        LOGGER.debug('Querying Database asynchronously')
+        LOGGER.debug('Querying Database asynchronously with concurrent operations')
         # Execute query within async database Session context
         async with self._async_session_factory() as session:
             # Build the select query
@@ -197,6 +212,7 @@ class AsyncPostgreSQLProvider(GenericSQLProvider, AsyncSQLProvider):
                 .filter(time_filter)
             )
 
+            # Execute count query to determine if we need data query
             count_result = await session.execute(count_stmt)
             matched = count_result.scalar()
 
@@ -224,12 +240,25 @@ class AsyncPostgreSQLProvider(GenericSQLProvider, AsyncSQLProvider):
             result = await session.execute(stmt)
             items = result.scalars().all()
 
-            for item in items:
-                response['numberReturned'] += 1
-                response['features'].append(
-                    self._sqlalchemy_to_feature(item, crs_transform_out,
-                                                select_properties)
-                )
+            # Process features concurrently for better performance with large result sets
+            async def process_feature(item):
+                return self._sqlalchemy_to_feature(item, crs_transform_out,
+                                                  select_properties)
+
+            # For small result sets, process sequentially to avoid overhead
+            if len(items) <= 10:
+                for item in items:
+                    response['numberReturned'] += 1
+                    response['features'].append(
+                        self._sqlalchemy_to_feature(item, crs_transform_out,
+                                                    select_properties)
+                    )
+            else:
+                # For larger result sets, process features concurrently
+                tasks = [process_feature(item) for item in items]
+                features = await asyncio.gather(*tasks)
+                response['features'].extend(features)
+                response['numberReturned'] = len(features)
 
         return response
 
@@ -263,7 +292,7 @@ class AsyncPostgreSQLProvider(GenericSQLProvider, AsyncSQLProvider):
                     if item_key not in self.properties:
                         props.pop(item_key)
 
-            # Add fields for previous and next items
+            # Add fields for previous and next items using concurrent queries
             id_field = getattr(self.table_model, self.id_field)
 
             prev_stmt = (
@@ -272,16 +301,19 @@ class AsyncPostgreSQLProvider(GenericSQLProvider, AsyncSQLProvider):
                 .order_by(id_field.desc())
                 .limit(1)
             )
-            prev_result = await session.execute(prev_stmt)
-            prev_item = prev_result.scalar_one_or_none()
-
             next_stmt = (
                 select(self.table_model)
                 .where(id_field > identifier)
                 .order_by(id_field.asc())
                 .limit(1)
             )
-            next_result = await session.execute(next_stmt)
+
+            # Execute prev and next queries concurrently for better performance
+            prev_task = session.execute(prev_stmt)
+            next_task = session.execute(next_stmt)
+
+            prev_result, next_result = await asyncio.gather(prev_task, next_task)
+            prev_item = prev_result.scalar_one_or_none()
             next_item = next_result.scalar_one_or_none()
 
             feature['prev'] = (

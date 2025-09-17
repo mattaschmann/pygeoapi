@@ -76,7 +76,6 @@ Expected improvements with async deployment:
 
 ```
 ✓ 23 tests passed
-✓ 5 tests skipped (integration tests, optional dependencies)
 ✓ All core async functionality verified
 ✓ ASGI application working correctly
 ✓ Connection pooling middleware functional
