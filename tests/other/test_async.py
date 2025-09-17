@@ -401,18 +401,18 @@ class TestAsyncIntegration:
 # Conditional test classes for specific async database drivers
 @pytest.mark.skipif(
     not ASYNC_DEPS_AVAILABLE,
-    reason="asyncpg not available"
+    reason="psycopg3 not available"
 )
 class TestAsyncPostgreSQL:
-    """Test async PostgreSQL functionality (requires asyncpg)."""
+    """Test async PostgreSQL functionality (requires psycopg3)."""
 
-    def test_asyncpg_import(self):
-        """Test that asyncpg can be imported if available."""
+    def test_psycopg_import(self):
+        """Test that psycopg can be imported if available."""
         try:
-            import asyncpg
-            assert asyncpg is not None
+            import psycopg
+            assert psycopg is not None
         except ImportError:
-            pytest.skip("asyncpg not available")
+            pytest.skip("psycopg not available")
 
 
 @pytest.mark.skipif(
