@@ -107,18 +107,11 @@ class AsyncPostgreSQLProvider(PostgreSQLProvider):
             'pool_recycle': 3600,  # Recycle connections after 1 hour
         }
 
-        # Filter out async-specific options from provider definition for sync engine
-        sync_provider_def = provider_def.copy()
-        if 'options' in sync_provider_def:
-            sync_options = sync_provider_def['options'].copy()
-            # Remove async-specific options that would cause issues with sync engine
-            async_only_options = {'pool_size', 'max_overflow', 'pool_pre_ping', 'pool_recycle'}
-            for option in async_only_options:
-                sync_options.pop(option, None)
-            sync_provider_def['options'] = sync_options
+        # Store original options for async engine
+        self._original_options = provider_def.get('options', {})
 
         # Initialize parent class first
-        super().__init__(sync_provider_def)
+        super().__init__(provider_def)
 
         # Create async engine for async operations with psycopg3 optimizations
         # Only use async-specific options for the async engine
@@ -140,6 +133,19 @@ class AsyncPostgreSQLProvider(PostgreSQLProvider):
         self._async_session_factory = async_sessionmaker(
             self._async_engine, class_=AsyncSession, expire_on_commit=False
         )
+
+    def _store_db_parameters(self, parameters, options):
+        """
+        Override to filter out async-specific options from sync engine
+        """
+        # Remove async-specific options that would cause issues with sync engine
+        async_only_options = {'pool_size', 'max_overflow', 'pool_pre_ping', 'pool_recycle'}
+        filtered_options = {
+            k: v for k, v in options.items()
+            if k not in async_only_options
+        }
+        # Call parent method with filtered options
+        super()._store_db_parameters(parameters, filtered_options)
 
 
     async def query_async(
