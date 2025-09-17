@@ -39,7 +39,6 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 
 from pygeoapi.provider.base import ProviderItemNotFoundError
 from pygeoapi.provider.sql import GenericSQLProvider, get_table_model
-from pygeoapi.provider.async_base import AsyncSQLProvider
 from pygeoapi.util import get_crs_from_uri
 
 LOGGER = logging.getLogger(__name__)
@@ -76,7 +75,7 @@ def get_async_engine(
     return engine
 
 
-class AsyncPostgreSQLProvider(GenericSQLProvider, AsyncSQLProvider):
+class AsyncPostgreSQLProvider(GenericSQLProvider):
     """
     An async provider for querying a PostgreSQL database
     """
@@ -108,9 +107,8 @@ class AsyncPostgreSQLProvider(GenericSQLProvider, AsyncSQLProvider):
             'pool_recycle': 3600,  # Recycle connections after 1 hour
         }
 
-        # Initialize both parent classes
-        GenericSQLProvider.__init__(self, provider_def, driver_name, extra_conn_args)
-        AsyncSQLProvider.__init__(self, provider_def)
+        # Initialize parent class
+        super().__init__(provider_def, driver_name, extra_conn_args)
 
         # Create async engine for async operations with psycopg3 optimizations
         self._async_engine = get_async_engine(
@@ -389,3 +387,33 @@ class AsyncPostgreSQLProvider(GenericSQLProvider, AsyncSQLProvider):
             await session.commit()
 
         return result.rowcount > 0
+
+    def query(self, *args, **kwargs):
+        """
+        Sync wrapper for async query operation
+        """
+        return asyncio.run(self.query_async(*args, **kwargs))
+
+    def get(self, identifier, crs_transform_spec=None, **kwargs):
+        """
+        Sync wrapper for async get operation
+        """
+        return asyncio.run(self.get_async(identifier, crs_transform_spec, **kwargs))
+
+    def create(self, item):
+        """
+        Sync wrapper for async create operation
+        """
+        return asyncio.run(self.create_async(item))
+
+    def update(self, identifier, item):
+        """
+        Sync wrapper for async update operation
+        """
+        return asyncio.run(self.update_async(identifier, item))
+
+    def delete(self, identifier):
+        """
+        Sync wrapper for async delete operation
+        """
+        return asyncio.run(self.delete_async(identifier))
