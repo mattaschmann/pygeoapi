@@ -738,7 +738,7 @@ class PostgreSQLProvider(GenericSQLProvider):
         :returns: pygeoapi.provider.sql.PostgreSQLProvider
         """
 
-        driver_name = 'postgresql+psycopg2'
+        driver_name = 'postgresql+psycopg'
         extra_conn_args = {
             'client_encoding': 'utf8',
             'application_name': 'pygeoapi'

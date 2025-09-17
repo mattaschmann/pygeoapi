@@ -92,7 +92,8 @@ class AsyncPostgreSQLProvider(PostgreSQLProvider):
         :returns: pygeoapi.provider.async_sql.AsyncPostgreSQLProvider
         """
 
-        driver_name = 'postgresql+psycopg2'
+        # Use psycopg3 for both sync and async connections
+        driver_name = 'postgresql+psycopg'
         async_driver_name = 'postgresql+psycopg'
         extra_conn_args = {
             'client_encoding': 'utf8',
@@ -110,8 +111,9 @@ class AsyncPostgreSQLProvider(PostgreSQLProvider):
         # Store original options for async engine
         self._original_options = provider_def.get('options', {})
 
-        # Initialize parent class first
-        super().__init__(provider_def)
+        # Initialize GenericSQLProvider directly with psycopg3 to avoid psycopg2 in PostgreSQLProvider
+        from pygeoapi.provider.sql import GenericSQLProvider
+        GenericSQLProvider.__init__(self, provider_def, driver_name, extra_conn_args)
 
         # Create async engine for async operations with psycopg3 optimizations
         # Only use async-specific options for the async engine
@@ -146,6 +148,22 @@ class AsyncPostgreSQLProvider(PostgreSQLProvider):
         }
         # Call parent method with filtered options
         super()._store_db_parameters(parameters, filtered_options)
+
+    def _get_bbox_filter(self, bbox: list[float]):
+        """
+        Construct the bounding box filter function using PostGIS functions
+        """
+        if not bbox:
+            return True  # Let everything through if no bbox
+
+        # Since this provider uses postgis, we can use ST_MakeEnvelope
+        storage_srid = get_crs_from_uri(self.storage_crs).to_epsg()
+        envelope = ST_MakeEnvelope(*bbox, storage_srid or 4326)
+
+        geom_column = getattr(self.table_model, self.geom)
+        bbox_filter = ST_Intersects(envelope, geom_column)
+
+        return bbox_filter
 
 
     async def query_async(
